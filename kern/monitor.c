@@ -25,6 +25,7 @@ struct Command {
 static struct Command commands[] = {
 	{ "help", "Display this list of commands", mon_help },
 	{ "kerninfo", "Display information about the kernel", mon_kerninfo },
+	{ "backtrace", "Display some shit", mon_backtrace},
 };
 
 /***** Implementations of basic kernel monitor commands *****/
@@ -58,11 +59,48 @@ mon_kerninfo(int argc, char **argv, struct Trapframe *tf)
 int
 mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 {
-	// Your code here.
+	// jos/kern/kdebug.h 
+	struct Eipdebuginfo eip_info;
+
+	// (inc/x86.h) Funkcia na zistenie EBP (vracia int32)
+	uint32_t ebp = read_ebp();
+	uint32_t* ebpp = NULL;
+	uint32_t eip = (uint32_t)mon_backtrace;
+	uint32_t args[5];
+	int i;
+
+	while(ebp != 0) {
+		
+		ebpp = (uint32_t*)ebp;
+		
+		// nacitanie argumentov	
+		// premenne su v zasobniku o jedno vyssie, nez navratova adresa (+2) 
+		for (i=0; i<5; i++){
+			args[i] = *(ebpp+i+2);	
+		}
+		cprintf("ebp %x eip %x args %08x %08x %08x %08x %08x\n",
+			ebp, eip, args[0], args[1], args[2], args[3], args[4]); 
+
+		// debuginfo_eip vrati 0, ak bola adresa eip spravna
+		// identifikuje funkciu, kde ukazuje eip a ulozi ju do eip_info
+		if (debuginfo_eip(eip, &eip_info) == 0){
+			// eip_file - nazov file v ktorom je eip
+			// eip_line - cislo riadku kodu
+			// eip_fn_namelen - dlzka nazvu funkcie z eip (hodnota pre *)
+			// eip_fn_name - nazov funkcie (dlzka vypisu prisposobena)
+			// eip_fn_addr - adresa zaciatku funkcie 
+			cprintf("%s:%d: %.*s+%d\n\n", eip_info.eip_file, eip_info.eip_line,
+					eip_info.eip_fn_namelen, eip_info.eip_fn_name, eip - eip_info.eip_fn_addr);
+				
+		}
+		// eip = ebp pointer + 1 (podla obrazka stacku)
+		eip = *(ebpp+1); 
+		// v ebpp sa nachadza adresa predosleho ebp 
+		ebp = *ebpp;	
+	}
+	
 	return 0;
 }
-
-
 
 /***** Kernel monitor command interpreter *****/
 

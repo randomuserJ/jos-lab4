@@ -117,6 +117,20 @@ env_init(void)
 	// Set up envs array
 	// LAB 3: Your code here.
 
+// polia netreba nulovat, lebo sa nuluju automaticky pri alokovani (memset)
+// treba dodrzat poradie, takze vkladame do listu odzadu
+//
+// env_free_list - hlava zoznamu
+// pre kazde env z envs:
+// 	kedze e_f_l najprv ukazuje na null, treba ho niekam docasne ulozit
+//	do aktualneho prostredia ulozim e_f_l	
+//	aktualizujem zaciatok zoznamu e_f_l 
+
+	for(int i = NENV-1; i >= 0; i--){
+		envs[i].env_link = env_free_list;
+		env_free_list = &envs[i];
+	}
+	
 	// Per-CPU part of the initialization
 	env_init_percpu();
 }
@@ -179,6 +193,26 @@ env_setup_vm(struct Env *e)
 	//    - The functions in kern/pmap.h are handy.
 
 	// LAB 3: Your code here.
+
+// ideme skopirovat adresny priestor, urceny slovnikom stranok jadra
+// do slovnika stranok v uzivatelskom adresnom priestore
+
+// najprv treba inkrementovat pocet referencii fyz. ramca
+// potom nastavime env_pgdir na novu stranku, ktora je alokovana vyssie
+// iterujeme cez vsetky polozky (nad hranicou UTOP)
+// zoberiem polozku slovnika stranok [PDX(VA)-> index do slovnika (hornych 10b)] 
+// jadra a nakopirujem ju do slovnika stranok tohoto prostredia
+
+	p->pp_ref++;
+	e->env_pgdir = (pde_t*)page2kva(p);
+
+// ina alternativa - memcpy(e->env_pgdir, kern_pgdir, PGSIZE);	
+
+	// horna hranica ramky = nad hranicou UTOP 
+	// pocet vstupov do pgdir = 1024 (NPDENTRIES)
+	for (int i = PDX(UTOP); i < NPDENTRIES; i++){
+		e->env_pgdir[i] = kern_pgdir[i];
+	}
 
 	// UVPT maps the env's own page table read-only.
 	// Permissions: kernel R, user R
@@ -267,6 +301,27 @@ region_alloc(struct Env *e, void *va, size_t len)
 	//   'va' and 'len' values that are not page-aligned.
 	//   You should round va down, and round (va + len) up.
 	//   (Watch out for corner-cases!)
+
+	// alokujeme 'len' bytov fyz. pamate pre prostredie e 
+ 	// a napamuje ich na VA 
+	// VA <= ROUNDOWN(va, PGSIZE)
+	// end <= EOUNDUP(va+len, PGSIZE)
+	// while va < end
+	//	p <-- page_alloc()
+	//	page_insert()
+	// 	va += PGSIZE
+
+	uintptr_t begin = ROUNDDOWN((uintptr_t)va, PGSIZE);
+	uintptr_t end = ROUNDUP((uintptr_t)va + len, PGSIZE);
+
+	for(; begin < end; begin+=PGSIZE){
+		struct PageInfo* p = page_alloc(0);
+		if(!p)
+			panic("region_alloc: not able to allocate a page");
+
+		page_insert(e->env_pgdir, p, (void*)begin, (PTE_W | PTE_U));
+	}
+	
 }
 
 //
@@ -324,10 +379,55 @@ load_icode(struct Env *e, uint8_t *binary)
 
 	// LAB 3: Your code here.
 
+	// nacitanie binarky 
+	struct Elf* elf_ph = (struct Elf*)binary;
+	
+	// je to validny Elf format ? 
+	if (elf_ph->e_magic != ELF_MAGIC)
+		panic("load_icode: not a valid Elf format");
+
+	// prvy program header sa nachadza na adrese program headder offset (e_phoff)
+	// ziskam si ho z binarky
+	// ph - prvy prog headder, eph - posledny
+	// eph je o tolko posunuty, kolko prghdr sa nachadza v tej binarke (e_phnum)
+
+	struct Proghdr *ph = (struct Proghdr*)(binary + elf_ph->e_phoff);
+	struct Proghdr *eph = ph + elf_ph->e_phnum;
+
+	// vynutime iny slovnik stranok 
+	lcr3(PADDR(e->env_pgdir));
+	
+	// nacitavame iba tie, ktore maju typ ELF_PROG_LOAD
+	for (; ph < eph; ph++){
+		// ak sa nerovna, ignorujeme
+		if (ph->p_type != ELF_PROG_LOAD)
+			continue;
+	
+		// ak sa rovna, potrebujem vytvorit pren miesto v pamati
+		region_alloc(e, (void*)ph->p_va, ph->p_memsz);
+						
+		// ideme kopirovat pamat (kam, odkial, kolko)
+		memcpy((void*)ph->p_va, binary+ph->p_offset, ph->p_filesz);
+
+		// ak memsize > filesize, tak nulujeme od p_va po koniec
+		// (od kade, cim, kolko)
+		memset((void*)ph->p_va+ph->p_filesz, '\0', ph->p_memsz-ph->p_filesz);
+	}
+	
+	// kedze budeme neskor volat env_run() a env_pop_tf() budeme potrebovat 
+	// nainicializovat strukturu Trapframe, konkretne hodnotu tf_eip (a tf_esp)
+	// tymto sa nastavi entry point funkcie
+	e->env_tf.tf_eip = elf_ph->e_entry;
+	
+	
 	// Now map one page for the program's initial stack
 	// at virtual address USTACKTOP - PGSIZE.
 
 	// LAB 3: Your code here.
+	region_alloc(e, (void*)USTACKTOP - PGSIZE, PGSIZE);
+
+	lcr3(PADDR(kern_pgdir));
+	
 }
 
 //
@@ -337,10 +437,27 @@ load_icode(struct Env *e, uint8_t *binary)
 // before running the first user-mode environment.
 // The new env's parent ID is set to 0.
 //
+
+// alokujeme nove prostredie
 void
 env_create(uint8_t *binary, enum EnvType type)
 {
 	// LAB 3: Your code here.
+	
+	// funkcia env_alloc vrati 0 ak sa podari
+	// ak nevrati 0 -> panikarime
+	// params - do coho chceme ulozit, id rodica (0 z komentu)
+	
+	struct Env* e;
+	int ret =  env_alloc(&e, 0);
+	if (ret != 0)
+		panic("env_create: %e", ret);
+
+	// load_icode nacita binarku (argument funkcie) do prostredia e
+	// potom nastavime typ prostredia (argument)
+
+	load_icode(e, binary);	
+	e->env_type = type;	
 }
 
 //
@@ -436,6 +553,9 @@ env_pop_tf(struct Trapframe *tf)
 //
 // This function does not return.
 //
+
+// spusti uzivatelske prostredie e
+ 
 void
 env_run(struct Env *e)
 {
@@ -458,6 +578,33 @@ env_run(struct Env *e)
 
 	// LAB 3: Your code here.
 
-	panic("env_run not yet implemented");
+	// spustenie uzivatelskeho prostredia:
+	//	ak uz nieco bezi (curenv != NULL) a je v stave RUNNING
+	//		-> nastavime ho na ENV_RUNABLE
+	//	nastavime curenv na toto prostredie e
+	// 	zmenime jeho stav na ENV_RUNNING
+	//	zvysime counter spusteni prostredia
+	//	prepneme reg cr3 na pgdir spustaneho prostredia
+	// 	zavolame env_pop_tf() => spustime prostredie
+
+	if (curenv && curenv->env_status == ENV_RUNNING)
+		curenv->env_status = ENV_RUNNABLE;
+
+	curenv = e;
+	e->env_status = ENV_RUNNING;
+	e->env_runs++;
+
+	// lcr3 - ulozena adresa slovnika stranok (PGDIR)
+	// chceme sa prepnut do ineho prostredia 
+	// treba teda zmenit aj slovnik stranok 
+	// env_pgdir je kernel VA (do cr3 treba PA)
+
+	lcr3(PADDR(e->env_pgdir));
+
+	// Trapframe obsahuje vsetky registre procesora, 
+	// aby prostredie mohlo zacat pracovat
+
+	env_pop_tf(&e->env_tf);
+	panic("env_run: not implemented");
 }
 

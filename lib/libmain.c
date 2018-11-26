@@ -13,7 +13,13 @@ libmain(int argc, char **argv)
 {
 	// set thisenv to point at our Env structure in envs[].
 	// LAB 3: Your code here.
-	thisenv = 0;
+
+	// aby sme mohli inicializovat smernik thisenv na aktualne prostredie z pola envs
+	// potrebujem zistit, o ake prostredie sa jedna cez sys_getenvid()
+
+	// env.h - environment id je 32 bit hodnota, pricom index do pola envs
+	// tvori spodnych 10 bitov (makro ENVX)
+	thisenv = &envs[ENVX(sys_getenvid())];
 
 	// save the name of the program so that panic() can use it
 	if (argc > 0)

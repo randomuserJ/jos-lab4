@@ -28,7 +28,6 @@ sched_yield(void)
 	// another CPU (env_status == ENV_RUNNING). If there are
 	// no runnable environments, simply drop through to the code
 	// below to halt the cpu.
-
 	// LAB 4: Your code here.
 
 	int index;
@@ -36,8 +35,9 @@ sched_yield(void)
 	// ID aktualneho prostredia nam hovori, ktore bezalo ako posledne
 	// ak este ziadne nebezalo, index do pola je nula
 	// inak je index zapisany v spodnych 10 bitov env_id (ENVX makro)
+	// bez +1 to tiez ide, ale obcas nie uplne spravne
 	if (curenv)
-		index = ENVX(curenv->env_id);
+		index = ENVX(curenv->env_id)+1;
 	else
 		index = 0;
 
@@ -57,7 +57,7 @@ sched_yield(void)
 	if (idle)
 		env_run(idle);
 	else{
-		if (curenv->env_status == ENV_RUNNING)
+		if (curenv && curenv->env_status == ENV_RUNNING)
 			env_run(curenv);
 	}
 

@@ -576,7 +576,6 @@ page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 	if (!pte)
 		return -E_NO_MEM;
 	
-
 	pp->pp_ref++;
 	
 	if (*pte & PTE_P)

@@ -85,7 +85,25 @@ sys_exofork(void)
 	// will appear to return 0.
 
 	// LAB 4: Your code here.
-	panic("sys_exofork not implemented");
+
+	// alokujeme nove prostredie 
+	struct Env* env;
+	int result = env_alloc(&env, curenv->env_id);
+
+	// ak funkcia prebehne bez komplikacii, vrati nulu
+	// ak je teda vysledok nenulovy (-E...), vratime ten
+	if (result)
+		return result;
+
+	// novo vytvorene prostredie este nie je spustitelne 
+	env->env_status = ENV_NOT_RUNNABLE;
+
+	// skopirujeme registre
+	env->env_tf = curenv->env_tf;
+	env->env_tf.tf_regs.reg_eax = 0;
+
+	// vraciame id noveho prostredia (nespustitelneho)
+	return env->env_id;
 }
 
 // Set envid's env_status to status, which must be ENV_RUNNABLE
@@ -105,6 +123,23 @@ sys_env_set_status(envid_t envid, int status)
 	// envid's status.
 
 	// LAB 4: Your code here.
+
+	struct Env* env; 
+	int result = envid2env(envid, &env, 1);
+
+	// vratime -E_BAD_INV ak neexistuje prostredie s takymto envid
+	// alebo ak volajuce prostredie nema pravo nastavovat env_id
+	if (result)	
+		return result;
+
+	// vratime -E_INVAL, ak je zly status
+	if (status != ENV_NOT_RUNNABLE && status != ENV_RUNNABLE)
+		return -E_INVAL;
+
+	// ked vsetko preslo, nastavime prostrediu status
+	env->env_status = status;
+	return 0;
+	
 	panic("sys_env_set_status not implemented");
 }
 
@@ -150,6 +185,37 @@ sys_page_alloc(envid_t envid, void *va, int perm)
 	//   allocated!
 
 	// LAB 4: Your code here.
+
+	struct Env* env;
+
+	// ak neexistuje prostredie s takymto id
+	if (envid2env(envid, &env, 1))
+		return -E_BAD_ENV;
+
+	// ak sme mimo vyhradeneho priestoru, alebo ak va nie je nasobkom PGSIZE
+	if ((uint32_t)va >= UTOP || (uint32_t)va % PGSIZE)
+		return -E_INVAL;
+
+	// ak sa nezhoduju parametre
+	if (perm & ~PTE_SYSCALL)
+		return -E_INVAL;
+
+	if ((perm & (PTE_U | PTE_P)) != (PTE_U | PTE_P))
+		return -E_INVAL;
+
+	// ak sa nepodari alkovat stranku
+	struct PageInfo* p = page_alloc(ALLOC_ZERO);
+	if (!p)
+		return -E_NO_MEM;
+
+	// ak sa nepodari namapovat stranku na va (neexistuje tabulka)		
+	int result = page_insert(env->env_pgdir, p, va, perm);
+	if (result){
+		page_free(p);
+		return result;
+	}
+
+	return 0;
 	panic("sys_page_alloc not implemented");
 }
 
@@ -181,6 +247,35 @@ sys_page_map(envid_t srcenvid, void *srcva,
 	//   check the current permissions on the page.
 
 	// LAB 4: Your code here.
+
+	struct Env* senv;
+	struct Env* denv;
+
+	// rovnako ako v predoslej funkcii
+	if (envid2env(srcenvid, &senv, 1) || envid2env(dstenvid, &denv, 1))
+		return -E_BAD_ENV;
+
+	if (((uint32_t)srcva >= UTOP || (uint32_t)srcva % PGSIZE) ||
+		((uint32_t)dstva >= UTOP || (uint32_t)dstva % PGSIZE))
+		return -E_INVAL;
+
+	// ak nie je vytvorene mapovanie
+	pte_t* pte;
+	struct PageInfo* p = page_lookup(senv->env_pgdir, srcva, &pte);
+	if (!p)
+		return -E_INVAL;
+
+	// ak sa nezhoduju prava 
+	if ((perm & (PTE_U | PTE_P)) != (PTE_U | PTE_P))
+		return -E_INVAL;
+
+	// ak source env je read-only
+	if ((perm & PTE_W) && !(*pte & PTE_W))
+		return -E_INVAL;
+	
+	// vrati bud 0 alebo chybu
+	return page_insert(denv->env_pgdir, p, dstva, perm);
+
 	panic("sys_page_map not implemented");
 }
 
@@ -197,6 +292,18 @@ sys_page_unmap(envid_t envid, void *va)
 	// Hint: This function is a wrapper around page_remove().
 
 	// LAB 4: Your code here.
+	struct Env* env;
+
+	// rovnake ako v predoslich funkciach
+	if (envid2env(envid, &env, 1))
+		return -E_BAD_ENV;
+
+	if ((uint32_t)va >= UTOP || (uint32_t)va % PGSIZE)
+		return -E_INVAL;
+	
+	page_remove(env->env_pgdir, va);
+	return 0;
+	
 	panic("sys_page_unmap not implemented");
 }
 
@@ -300,7 +407,7 @@ syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, 
 	
 		case SYS_exofork:
 			return (int32_t)sys_exofork();
-
+	
 		case SYS_env_set_status:
 			return sys_env_set_status((envid_t)a1, (int)a2);
 			

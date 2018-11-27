@@ -8,10 +8,11 @@
 void sched_halt(void);
 
 // Choose a user environment to run and run it.
+
 void
 sched_yield(void)
 {
-	struct Env *idle;
+	struct Env *idle = NULL;
 
 	// Implement simple round-robin scheduling.
 	//
@@ -29,6 +30,36 @@ sched_yield(void)
 	// below to halt the cpu.
 
 	// LAB 4: Your code here.
+
+	int index;
+
+	// ID aktualneho prostredia nam hovori, ktore bezalo ako posledne
+	// ak este ziadne nebezalo, index do pola je nula
+	// inak je index zapisany v spodnych 10 bitov env_id (ENVX makro)
+	if (curenv)
+		index = ENVX(curenv->env_id);
+	else
+		index = 0;
+
+	// prechadzame ceze vsetky (NENV) prostredia a hladame,
+	// ktore z nich je spustitelne
+	for(int i = 0; i < NENV; i++){
+		index = (index+i) % NENV;
+		if (envs[index].env_status == ENV_RUNNABLE){
+			idle = &envs[index];
+			break;
+		}
+	}
+	
+	// ak sme nasli spustitelne prostredie, spustime ho
+	// ak sme nenasli, ale posledne ma stale status ENV_RNNING,
+//	// vyberieme to (v env_run sa ukonci a spusti znovu)
+	if (idle)
+		env_run(idle);
+	else{
+		if (curenv->env_status == ENV_RUNNING)
+			env_run(curenv);
+	}
 
 	// sched_halt never returns
 	sched_halt();

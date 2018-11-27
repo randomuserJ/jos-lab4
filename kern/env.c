@@ -626,8 +626,8 @@ env_run(struct Env *e)
 	// env_pgdir je kernel VA (do cr3 treba PA)
 
 	lcr3(PADDR(e->env_pgdir));
-
-	// Trapframe obsahuje vsetky registre procesora, 
+	unlock_kernel();
+//	// Trapframe obsahuje vsetky registre procesora, 
 	// aby prostredie mohlo zacat pracovat
 
 	env_pop_tf(&e->env_tf);

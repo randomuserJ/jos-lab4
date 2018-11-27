@@ -176,7 +176,7 @@ mem_init(void)
 	// LAB 3: Your code here.
 
 	envs = (struct Env*) boot_alloc(NENV * sizeof(struct Env));
-	memset(envs, '\0', NENV * sizeof(struct PageInfo));
+	memset(envs, '\0', NENV * sizeof(struct Env));
 
 	//////////////////////////////////////////////////////////////////////
 	// Now that we've allocated the initial kernel data structures, we set
@@ -297,6 +297,22 @@ mem_init_mp(void)
 	//
 	// LAB 4: Your code here:
 
+	// pre kazdy procesor (NCPU) musime alokovat priestor pre jeho vlastny zasobnik
+	// KSTACKTOP - i * (velkost + gap)
+	
+	// mapujeme virtualne adresy od KSTACKTOP nizsie, na fyzicke miesta v pamati, ulozene
+	// v poli percpu_kstacks[]
+
+	// od hlavneho KSTACKTOP musime odpocitat velkost hlavneho (asi BSP) zasobnika
+	// a potom velkosti + medzery ciastkovych1
+	for (int i = 0; i < NCPU; i++){
+		boot_map_region(kern_pgdir,
+			KSTACKTOP - KSTKSIZE - (i*(KSTKSIZE + KSTKGAP)),
+			KSTKSIZE,
+			PADDR(percpu_kstacks[i]),
+			PTE_W);
+	}
+
 }
 
 // --------------------------------------------------------------
@@ -350,10 +366,15 @@ page_init(void)
 	size_t i;
 	pages[0].pp_ref = 1;
 	for (i = 1; i < npages; i++){
-		if (i*PGSIZE >= IOPHYSMEM && i*PGSIZE < EXTPHYSMEM)
+		if ((i*PGSIZE >= IOPHYSMEM && i*PGSIZE < EXTPHYSMEM) ||
+
+			((i*PGSIZE >= EXTPHYSMEM) && (i*PGSIZE < PADDR(boot_alloc(0)))) || 
+
+			((i*PGSIZE >= MPENTRY_PADDR) && (i*PGSIZE < MPENTRY_PADDR+PGSIZE)))
+		{
 			pages[i].pp_ref = 1;
-		else if ((i*PGSIZE >= EXTPHYSMEM) && (i*PGSIZE < PADDR(boot_alloc(0))))
-			pages[i].pp_ref = 1;
+			pages[i].pp_link = NULL;
+		}
 		else{
 			pages[i].pp_ref = 0;
 			pages[i].pp_link = page_free_list;
@@ -637,6 +658,7 @@ tlb_invalidate(pde_t *pgdir, void *va)
 // location.  Return the base of the reserved region.  size does *not*
 // have to be multiple of PGSIZE.
 //
+
 void *
 mmio_map_region(physaddr_t pa, size_t size)
 {
@@ -664,8 +686,29 @@ mmio_map_region(physaddr_t pa, size_t size)
 	// Hint: The staff solution uses boot_map_region.
 	//
 	// Your code here:
-	panic("mmio_map_region not implemented");
+
+	// size zaokruhlime na velkost stranky
+	size = ROUNDUP(size, PGSIZE);
+
+	// ak by sme alokaciou presiahli hranicu MMIOLIM, panikarime 
+	if (base + size >= MMIOLIM)
+		panic("mmio_map_region: not enough memory");
+
+	uint32_t perms = PTE_PCD | PTE_PWT | PTE_W;
+
+	// mapujeme adresy [va ; va+size) na fyz. adresy [pa ; pa+size)
+	// v nasom pripade od hranice MMIOBASE 
+	boot_map_region(kern_pgdir, base, size, pa, perms);
+
+	// hranicu alokovanej pamate posuvame 
+	base += size;
+
+	// vraciame povodnu spodnu hranicu rezervovanej pamate
+	return (void*)(base - size);	
+
+	//panic("mmio_map_region not implemented");
 }
+
 
 static uintptr_t user_mem_check_addr;
 

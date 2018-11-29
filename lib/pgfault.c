@@ -26,12 +26,24 @@ set_pgfault_handler(void (*handler)(struct UTrapframe *utf))
 {
 	int r;
 
-	if (_pgfault_handler == 0) {
+	// ak je _pf_h 0, nemame nastavenu funkciu pre obsluhu prerusenia
+		if (_pgfault_handler == 0) 
 		// First time through!
 		// LAB 4: Your code here.
-		panic("set_pgfault_handler not implemented");
-	}
 
+		// alokujeme chybovy zasobnik pre prerusenia
+		if (sys_page_alloc(0, (void*)(UXSTACKTOP-PGSIZE), PTE_W|PTE_P|PTE_U) < 0)
+			panic("set_pgfault_handler:sys_page_alloc failed");
+		
+		
+
+	// smernik na funkciu prepiseme podla vst. argumentu *handler
+	// a zavolame assemblerovsku funkciu, ktora nastavi upcall
+	
 	// Save handler pointer for assembly to call.
 	_pgfault_handler = handler;
+	if (sys_env_set_pgfault_upcall(0, _pgfault_upcall) < 0)
+		panic("set_pgfault_handler:sys_env_set_pgfault_upcall failed");
+
+	//panic("set_pgfault_handler not implemented");
 }

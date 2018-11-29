@@ -155,6 +155,23 @@ static int
 sys_env_set_pgfault_upcall(envid_t envid, void *func)
 {
 	// LAB 4: Your code here.
+	
+// obsluha vynimky:
+//	nastavime systemove volanie prostredia envid modifikaciou polozky
+//	env_pgfault_upcall 
+
+	// vytvorenie noveho prostredia
+	struct Env* env;
+	
+	// ziskame prostredia na zaklade jeho id (1 - kontrola opravneni)	
+	// ak sa nieco nepodari, vratime chybu
+	if (envid2env(envid, &env, 1))
+		return -E_BAD_ENV;
+
+	// ak sa vsetko podari, modifikujeme polozku v strukture, priradenim func
+	env->env_pgfault_upcall = func;
+
+	return 0;
 	panic("sys_env_set_pgfault_upcall not implemented");
 }
 

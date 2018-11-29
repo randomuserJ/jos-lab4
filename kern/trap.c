@@ -345,6 +345,9 @@ page_fault_handler(struct Trapframe *tf)
 
 	// LAB 3: Your code here.
 
+//	if ((tf->tf_cs&3) == 0)
+//		panic("Kernel page fault!");
+
 	// We've already handled kernel-mode exceptions, so if we get here,
 	// the page fault happened in user mode.
 
@@ -378,6 +381,69 @@ page_fault_handler(struct Trapframe *tf)
 	//   (the 'tf' variable points at 'curenv->env_tf').
 
 	// LAB 4: Your code here.
+
+// rodicovske aj detske prostredia su namapovane na to iste miesto v RAM
+// ak sa jeden z nich pokusi modifikovat toto miesto (stranku), nastane vypadok
+// na obsluhu vynimy vypadku stranky sa pouziva tato funkcia
+
+// aby sa obsluha mohla vykonat, je potrebne si ulozit stav prostredia na zasobnik
+// po ukonceni sa vratime spat
+// keby pushujeme na stadardny zasobnik, nastala by dalsia chyba, atd ..
+
+// preto kazde prostredia ma specialny zasobnik pre obsluhu vynimiek.
+// normalny zasobnik: <USTACKTOP-PGSIZE ; USTACKTOP-1>
+// zasobnik user exception stack: <UXSTACKTOP-PGSIZE ; UXSTACKTOP-1> (UTOP)
+
+// v tomto handleri treba prepnut normalny zasobnik na chybovy
+// na zasobnik sa pushnu registre s error code a stavom prostredia
+// aby sme sa po obsluhe vedeli vratit do stavu, v akom prerusenie nastalo
+
+	// kontrola, ci sa jedna o vypadok stranky v uziv. priestore jadra alebo uzivatela
+		// ak v jadre -> nieco je zle => panic()
+		// ak v userovi -> pravdepodobne sa jedna o Copy-on-Write
+
+	// ak si nestavilo si toto prostredie upcall, destroyneme
+	if (curenv->env_pgfault_upcall) {
+
+		// struktura User Tf, ktoru pouzivaju prostredia, je ekvivalent
+		// struktury Tf, ktoru pouziva jadro
+
+		// struktura ma velkost size
+		// keby ju umiestnime priamo na hranicu zasobnika (UXSTACKTOP), 
+		// udaje UTf by sa ukladali nahor a neboli by jeho sucastou
+		// preto treba strukturu umiestnit pod hranicu zasobnika
+		size_t size = sizeof(struct UTrapframe);
+		struct UTrapframe* utf = (struct UTrapframe*)(UXSTACKTOP-size);
+		
+		// ak sa upcall rekurzivne zavola, treba posunut strukturu na spravne
+		// miesto, aby nanastalo jej prepisanie a aby sme sa do nej mohli vratit
+		// zaroven vsak treba dat pozor, aby sme nevosli do empty memory
+		if (tf->tf_esp > USTACKTOP) {
+			size += 4;
+			utf = (struct UTrapframe*) (tf->tf_esp - size);
+		}
+
+		// kontrolujeme, ci prostredie moze zapisovat na dany rozsah adries
+		user_mem_assert(curenv, (void*) utf, size, PTE_W | PTE_U);
+
+		// nahrame do struktury udaje z trapframe
+		// to co sme dostali od procesora, predavame uzivatelskemu prostrediu
+		utf->utf_fault_va = fault_va; // $cr2 - va, ktora sposobila vypadok stranky
+		utf->utf_err = tf->tf_err; // kontrola, ci bol vobec nastaveny bit write
+		utf->utf_regs = tf->tf_regs; // registre, aby sme sa vedeli vratit do stavu
+		utf->utf_eip = tf->tf_eip; // smernik na instrukciu, ktora sposobila vypadok
+		utf->utf_eflags = tf->tf_eflags; // chybove priznaky
+		utf->utf_esp = tf->tf_esp; // zasobnik, aby sme sa vedeli vratit
+
+		// chceme, aby sa pokracovalo na zaobniku pouzivatelskeho prostredia
+			// na vrchol zasobnika nahrame strukturu utf
+		// a chceme, aby sa vykonala prva instrukcia pgf_upcall
+		tf->tf_esp = (uint32_t) utf; 
+		tf->tf_eip = (uint32_t) curenv->env_pgfault_upcall;
+
+		// teraz uz mozeme spustit prostredie
+		env_run(curenv);
+	}
 
 	// Destroy the environment that caused the fault.
 	cprintf("[%08x] user fault va %08x ip %08x\n",

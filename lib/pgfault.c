@@ -27,7 +27,7 @@ set_pgfault_handler(void (*handler)(struct UTrapframe *utf))
 	int r;
 
 	// ak je _pf_h 0, nemame nastavenu funkciu pre obsluhu prerusenia
-		if (_pgfault_handler == 0) 
+	if (_pgfault_handler == 0) 
 		// First time through!
 		// LAB 4: Your code here.
 
@@ -35,8 +35,6 @@ set_pgfault_handler(void (*handler)(struct UTrapframe *utf))
 		if (sys_page_alloc(0, (void*)(UXSTACKTOP-PGSIZE), PTE_W|PTE_P|PTE_U) < 0)
 			panic("set_pgfault_handler:sys_page_alloc failed");
 		
-		
-
 	// smernik na funkciu prepiseme podla vst. argumentu *handler
 	// a zavolame assemblerovsku funkciu, ktora nastavi upcall
 	

@@ -30,21 +30,19 @@ sched_yield(void)
 	// below to halt the cpu.
 	// LAB 4: Your code here.
 
-	int index;
+	int index, first = 0;
 
 	// ID aktualneho prostredia nam hovori, ktore bezalo ako posledne
 	// ak este ziadne nebezalo, index do pola je nula
 	// inak je index zapisany v spodnych 10 bitov env_id (ENVX makro)
 	// bez +1 to tiez ide, ale obcas nie uplne spravne
 	if (curenv)
-		index = ENVX(curenv->env_id)+1;
-	else
-		index = 0;
+		first = ENVX(curenv->env_id)+1;
 
 	// prechadzame ceze vsetky (NENV) prostredia a hladame,
 	// ktore z nich je spustitelne
 	for(int i = 0; i < NENV; i++){
-		index = (index+i) % NENV;
+		index = (first+i) % NENV;
 		if (envs[index].env_status == ENV_RUNNABLE){
 			idle = &envs[index];
 			break;
@@ -106,7 +104,7 @@ sched_halt(void)
 		"pushl $0\n"
 		"pushl $0\n"
 		// Uncomment the following line after completing exercise 13
-		//"sti\n"
+		"sti\n"		// prerusenia na ostatnych procesoroch
 		"1:\n"
 		"hlt\n"
 		"jmp 1b\n"

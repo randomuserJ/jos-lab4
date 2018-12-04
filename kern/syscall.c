@@ -366,8 +366,71 @@ static int
 sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
 {
 	// LAB 4: Your code here.
-	panic("sys_ipc_try_send not implemented");
+	struct Env* env;
+	struct PageInfo* p;
+	pte_t* pte = NULL;
+	int r;
+
+	// ak neexistuje prostredie pre dane idcko
+	// 0, lebo nechceme kontrolovat permissions
+	//	hocikto moze hocikomu poslat
+	if ((r = envid2env(envid, &env, 0)))
+		return r;
+
+	// ak prijimatel nie je v stave cakania na spravu 
+	if (!env->env_ipc_recving)
+		return -E_IPC_NOT_RECV;
+	
+	// zatial takto, ak sa posiela stranka, nastavi sa perm
+	env->env_ipc_perm = 0;
+
+	if ((uintptr_t)srcva < UTOP){
+		// ak nie sme zarovnani na velkost stranky
+		if ((uintptr_t)srcva % PGSIZE)
+			return -E_INVAL;
+
+		// kontrola opravneni
+		if ((perm & (PTE_U | PTE_P)) != (PTE_U | PTE_P))
+			return -E_INVAL;
+
+		if (!perm & !PTE_SYSCALL)
+			return -E_INVAL;
+
+		// ak neexistuje mapovanie na danej srcva, vratime chybu
+		// curenv je odosielatelske prostredie 
+		p = page_lookup(curenv->env_pgdir, srcva, &pte);
+		if (!p)
+			return -E_INVAL;
+
+		// stranka sice je namapovana, ale moze byt iba read-only
+		if ((perm & PTE_W) && !(*pte & PTE_W))
+			return -E_INVAL;
+		
+		// ak je dstava < UTOP, chceme prijat spravu
+		// inak nechceme mapovanie a neurobi sa nic
+		if ((uintptr_t)env->env_ipc_dstva < UTOP){
+
+			// ak sa nam nepodari namapovat stranku do va prijimatela
+			// env je prijimatelske prostredie (kam chceme posielat)
+			r = page_insert(env->env_pgdir, p, env->env_ipc_dstva, perm);
+			if (r < 0)
+				return r;	// -E_NO_MEM	
+		
+		// nastavi sa, ak sa posiela stranka, inak sa nenastavi
+		env->env_ipc_perm = perm;
+		}
+	}
+	
+	// ked sa vsetko podarilo, nastavime hodnoty podla komentarov
+	env->env_ipc_recving = false;
+	env->env_ipc_from = curenv->env_id;
+	env->env_ipc_value = value;
+	env->env_status = ENV_RUNNABLE;
+
+	env->env_tf.tf_regs.reg_eax = 0; // hodnotu returnujeme takto
+	return 0;	// sem sa nikdy nedostaneme, preto je treba vratit inak
 }
+
 
 // Block until a value is ready.  Record that you want to receive
 // using the env_ipc_recving and env_ipc_dstva fields of struct Env,
@@ -383,9 +446,24 @@ sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
 static int
 sys_ipc_recv(void *dstva)
 {
-	// LAB 4: Your code here.
-	panic("sys_ipc_recv not implemented");
-	return 0;
+	// LAB 4: Your code here.	
+		
+	// ak je dstva pod hranicou UTOP, jedna sa o prijimanie spravy
+	// ak dstva nie je zarovnana na hrincu stranky, vratime chybu
+	if (((uintptr_t)dstva < UTOP) && ((uintptr_t)dstva % PGSIZE))
+		return -E_INVAL;
+	
+	// ak chcem prijmat spravu, dstva musi byt > UTOP
+	// ked sme sa sem dostali, mozeme ponastavovat, co treba
+	curenv->env_ipc_dstva = dstva;			
+	curenv->env_ipc_recving = true;		// prijimame spravy
+	curenv->env_status = ENV_NOT_RUNNABLE;
+	sched_yield();
+//	sys_yield();	// sys_yield robi iba to, ze vola sched_yield
+			// takze je jedno, ktory pouzijeme
+		
+	panic("sys_ipc_recv not implemented"); 	// sem sa nikdy nedostaneme
+	return 0;				// planovac nas nepusti
 }
 
 // Dispatches to the correct kernel function, passing the arguments.
@@ -434,6 +512,11 @@ syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, 
 		case SYS_yield:
 			sys_yield();			
 			return 0;
+
+		case SYS_ipc_try_send:
+			return sys_ipc_try_send((envid_t) a1, (uint32_t) a2, (void*) a3, (unsigned) a4);
+		case SYS_ipc_recv:
+			return sys_ipc_recv((void*)a1);
 
 		default:
 			return -E_INVAL;
